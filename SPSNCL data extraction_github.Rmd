@@ -1,0 +1,155 @@
+---
+title: "SPSNCL data extraction"
+author: "CER5317"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+
+## Loading Libraries, connect to DB
+
+```{r libraries}
+library(tidyverse)
+library(dbplyr)
+library(dplyr)
+library(odbc)
+library(DBI)
+library(lubridate)
+
+# Connections----
+
+con = dbConnect(odbc::odbc(), "RecRegistry", timeout = 10)
+```
+
+
+```{r}
+#global variables
+
+#18 months in days; change as required
+# past <- 548
+number_of_rows <- 1000000
+min_date <- today()- months(18)
+```
+
+
+## SPSN Tables Extraction
+
+```{r }
+
+SmallUnitRegistrations_tbl <- tbl(con, in_schema("RETDim", "SmallUnitRegistrations")) 
+
+SmallUnitRegistrations <- SmallUnitRegistrations_tbl %>% 
+  select(SGU_ID,
+         "Small Unit Accreditation Code",
+         "SGU Brand",
+         "SGU Model",
+         "Retailer ABN",
+         "Retailer Name",
+         sgu_created_dim_date_id
+         ) 
+
+
+
+
+SGU_PANEL_SERIAL_tbl <- tbl(con, in_schema("CERREGISTRY", "SGU_PANEL_SERIAL")) 
+
+SGU_PANEL_SERIAL <- SGU_PANEL_SERIAL_tbl %>% 
+  select(SGU_ID,
+         PANEL_SERIAL_NUMBER          # = SERIAL_NUMBER
+         ) 
+   
+
+
+
+
+
+panel_serial_tbl <- tbl(con, in_schema("CERREGISTRY", "PANEL_SERIAL")) 
+
+panel_serial <- panel_serial_tbl %>% 
+  select(SERIAL_NUMBER,
+         MODEL_ID,
+         SUPPLIER_ID,
+         STATUS,
+         CREATED_DATE,
+         CREATED_BY,
+         MODIFIED_DATE,
+         MODIFIED_BY,
+         REASON,
+         REASON_OTHER
+         ) 
+
+
+
+
+
+
+SGU_tbl <- tbl(con, in_schema("CERREGISTRY", "SGU")) 
+
+SGU <- SGU_tbl %>% 
+  select(ID,                        # ID = SGU_ID
+         INSTALLATION_DATE,
+         INSTALLER_ID
+         ) %>%
+   filter(INSTALLATION_DATE >= min_date) %>%
+   rename(SGU_ID = ID) %>% 
+   inner_join(SGU_PANEL_SERIAL, by = c("SGU_ID"="SGU_ID"))%>% 
+   inner_join(panel_serial, by = c("PANEL_SERIAL_NUMBER" = "SERIAL_NUMBER"))
+
+
+
+
+
+SGU_TECHNICAL_PERSON_tbl <- tbl(con, in_schema("CERREGISTRY", "SGU_TECHNICAL_PERSON")) 
+
+SGU_TECHNICAL_PERSON <- SGU_TECHNICAL_PERSON_tbl %>% 
+  select(ID,                          #Technical Person ID = SGU Installer ID
+         EMAIL,
+         FIRST_NAME,
+         SURNAME,
+         INSTALLER_ACCREDITED_NUMBER
+         ) %>%
+  rename( "Installer Email" = EMAIL) %>% 
+  rename("Technical Person ID" = ID) 
+
+
+
+
+```
+
+
+
+## Join tables
+
+```{r}
+
+joined <- SGU %>%  
+   inner_join(SmallUnitRegistrations, by = c("SGU_ID" = "SGU_ID")) %>% 
+   inner_join(SGU_TECHNICAL_PERSON, by = c("INSTALLER_ID" = "Technical Person ID")) %>% 
+   head(number_of_rows) %>% 
+   as_tibble()
+
+```
+
+
+## pins
+
+```{r }
+library(pins)
+board_register("rsconnect", 
+               key = Sys.getenv("CONNECT_API_KEY"), 
+               server = "https://rconnect.cer.gov.au")
+
+# publish pin in R Connect ---- 
+# SPSNCL
+ pins::pin(joined, "CER5049/SPSNCL", board= "rsconnect") # edit this line with your CER number if you need to 
+
+
+# Retrieve Pin
+# pin_get("CER5317/SPSNCL", board = "rsconnect")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
